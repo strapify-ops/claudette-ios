@@ -1,0 +1,445 @@
+import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
+
+// One block in the transcript: a reply, a user message, or a folded run of tool steps.
+enum Block: Identifiable {
+    case user(Int, Message)
+    case asst(Int, Message)
+    case steps(Int, [Message], live: Bool)
+
+    var id: Int {
+        switch self { case .user(let i, _), .asst(let i, _), .steps(let i, _, _): return i }
+    }
+}
+
+func blocks(_ msgs: [Message], working: Bool) -> [Block] {
+    var out: [Block] = []
+    var i = 0
+    while i < msgs.count {
+        let m = msgs[i]
+        if m.r == "user" { out.append(.user(i, m)); i += 1; continue }
+        if m.r == "asst" { out.append(.asst(i, m)); i += 1; continue }
+        let start = i
+        var run: [Message] = []
+        while i < msgs.count, msgs[i].r != "user", msgs[i].r != "asst" { run.append(msgs[i]); i += 1 }
+        out.append(.steps(start, run, live: working && i == msgs.count))
+    }
+    return out
+}
+
+struct SessionView: View {
+    let id: String
+    @EnvironmentObject var store: Store
+    @State private var detail: Detail?
+    @State private var error: String?
+    @State private var text = ""
+    @State private var files: [Attachment] = []
+    @State private var suggestion = ""
+    @State private var suggestKey = ""
+    @State private var lastSig = ""
+    @FocusState private var focused: Bool
+
+    private var session: Session? { detail?.session ?? store.session(id) }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if let d = detail {
+                        if d.total > d.messages.count {
+                            Text("Showing the last \(d.messages.count) of \(d.total)").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                        }
+                        ForEach(blocks(d.messages, working: d.session.isWorking)) { b in
+                            BlockView(block: b, sessionID: id)
+                        }
+                        ForEach(store.outgoing[id] ?? []) { o in OutgoingView(o: o, sessionID: id) }
+                        if let q = d.queue, !q.isEmpty {
+                            Label("\(q.count) message\(q.count == 1 ? "" : "s") waiting in the desktop's queue for Claude", systemImage: "hourglass")
+                                .font(.footnote).foregroundStyle(.yellow)
+                        }
+                        if d.session.isWorking {
+                            HStack(spacing: 8) { ProgressView(); Text("Claude is working…").foregroundStyle(.secondary) }.font(.footnote)
+                        } else if let n = d.session.needsAction, !n.isEmpty {
+                            Text("Needs you: \(n)").font(.footnote).foregroundStyle(.yellow)
+                        }
+                    } else if let error {
+                        Text(error).foregroundStyle(.orange)
+                    } else {
+                        ProgressView().frame(maxWidth: .infinity).padding(40)
+                    }
+                    Color.clear.frame(height: 1).id("end")
+                }
+                .padding(.horizontal, 12).padding(.top, 8)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .defaultScrollAnchor(.bottom)
+            .background(Theme.bg)
+            .safeAreaInset(edge: .bottom) {
+                Composer(text: $text, files: $files, suggestion: suggestion, focused: $focused) {
+                    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !t.isEmpty || !files.isEmpty else { return }
+                    store.send(to: id, text: t, files: files)
+                    text = ""
+                    files = []
+                    suggestion = ""
+                    withAnimation { proxy.scrollTo("end", anchor: .bottom) }
+                }
+            }
+            .onChange(of: lastSig) { _, _ in withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
+        }
+        .navigationTitle(session?.title ?? "Session")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if let s = session {
+                        Text([s.model, s.effort].compactMap { $0 }.joined(separator: " · "))
+                        if let p = s.pending {
+                            Button("Cancel \(p == "archive" ? "archiving" : "restoring")") { act("cancel") }
+                        } else {
+                            Button(s.archived ? "Restore" : "Archive") { act(s.archived ? "unarchive" : "archive") }
+                        }
+                        Section("Model") {
+                            ForEach([("claude-fable-5-1", "Fable 5.1"), ("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-haiku-5-5", "Haiku 5.5")], id: \.0) { m in
+                                Button(m.1) { store.send(to: id, text: "/model \(m.0)", files: []) }
+                            }
+                        }
+                        Section("Effort") {
+                            ForEach(["low", "medium", "high", "xhigh", "max"], id: \.self) { e in
+                                Button(e) { store.send(to: id, text: "/effort \(e)", files: []) }
+                            }
+                        }
+                    }
+                } label: { Image(systemName: "ellipsis.circle") }
+            }
+        }
+        .task(id: id) {
+            while !Task.isCancelled {
+                await load()
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
+    }
+
+    private func act(_ action: String) {
+        Task { try? await API.shared.archive(id, action); await store.loadList(); await load() }
+    }
+
+    private func load() async {
+        do {
+            let d = try await API.shared.detail(id)
+            detail = d
+            error = nil
+            store.reconcile(id, with: d.messages)
+            let sig = "\(d.total)|\(d.messages.last?.ts ?? "")|\(d.session.isWorking)|\(store.outgoing[id]?.count ?? 0)"
+            if sig != lastSig { lastSig = sig }
+            await loadSuggestion(d)
+        } catch {
+            if (error as? URLError)?.code == .cancelled || error is CancellationError { return }
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func loadSuggestion(_ d: Detail) async {
+        guard !d.session.isWorking, d.messages.last(where: { $0.r == "user" || $0.r == "asst" })?.r == "asst" else {
+            suggestion = ""; return
+        }
+        let key = "\(d.total)|\(d.messages.last?.ts ?? "")"
+        guard key != suggestKey else { return }
+        suggestKey = key
+        suggestion = (try? await API.shared.suggest(id)) ?? ""
+    }
+}
+
+struct BlockView: View {
+    let block: Block
+    let sessionID: String
+    @State private var open = false
+
+    var body: some View {
+        switch block {
+        case .user(_, let m):
+            VStack(alignment: .trailing, spacing: 6) {
+                ImageStrip(keys: m.imgs ?? [], sessionID: sessionID)
+                if let t = m.t, !t.isEmpty {
+                    Text(t).textSelection(.enabled)
+                        .padding(10).background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 14))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 40)
+        case .asst(_, let m):
+            MarkdownView(text: m.t ?? "")
+        case .steps(_, let run, let live):
+            let tools = run.filter { $0.r == "tool" }
+            let errs = run.filter { $0.r == "err" }.count
+            let shots = run.filter { $0.r == "shot" }.flatMap { $0.imgs ?? [] }
+            VStack(alignment: .leading, spacing: 6) {
+                if !tools.isEmpty || errs > 0 {
+                    DisclosureGroup(isExpanded: $open) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(run.enumerated()), id: \.offset) { _, x in
+                                if x.r == "tool" {
+                                    (Text(x.short ?? x.name ?? "tool").bold() + Text((x.detail ?? "").isEmpty ? "" : " · \(x.detail!)"))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                } else if x.r == "err" {
+                                    Text(x.t ?? "").font(.caption.monospaced()).foregroundStyle(.red)
+                                }
+                            }
+                        }.padding(.top, 4)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(live ? "Working · \(tools.last?.short ?? tools.last?.name ?? "")" : "\(tools.count) step\(tools.count == 1 ? "" : "s")")
+                            if errs > 0 { Text("· \(errs) error\(errs == 1 ? "" : "s")").foregroundStyle(.red) }
+                        }.font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                ImageStrip(keys: shots, sessionID: sessionID)
+            }
+        }
+    }
+}
+
+struct OutgoingView: View {
+    let o: Outgoing
+    let sessionID: String
+    @EnvironmentObject var store: Store
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Text(o.text.isEmpty ? "(attachments)" : o.text)
+                .padding(10).background(Theme.userBubble.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
+            switch o.state {
+            case .uploading:
+                ProgressView(value: o.progress).frame(width: 160)
+                Text("Uploading \(Int(o.progress * 100))%. Keep Claudette open.").font(.caption).foregroundStyle(.orange)
+            case .sending:
+                Text("Sending…").font(.caption).foregroundStyle(.secondary)
+            case .sent:
+                Text("Sent. Waiting for it to show in the session.").font(.caption).foregroundStyle(.secondary)
+            case .failed:
+                HStack {
+                    Text("Not sent: \(o.error ?? "")").font(.caption).foregroundStyle(.red)
+                    Button("Dismiss") { store.dismiss(sessionID, o.id) }.font(.caption)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, 40)
+    }
+}
+
+// MARK: - Composer
+
+struct Composer: View {
+    @Binding var text: String
+    @Binding var files: [Attachment]
+    let suggestion: String
+    var focused: FocusState<Bool>.Binding
+    let send: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !suggestion.isEmpty && text.isEmpty {
+                HStack {
+                    Text(suggestion).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                    Spacer()
+                    Button("Paste") { text = suggestion }.font(.footnote.weight(.semibold))
+                }
+            }
+            AttachmentBar(files: $files)
+            HStack(alignment: .bottom, spacing: 8) {
+                AttachMenu(files: $files)
+                TextField(suggestion.isEmpty ? "Reply to Claude" : suggestion, text: $text, axis: .vertical)
+                    .lineLimit(1...8)
+                    .focused(focused)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Theme.card, in: RoundedRectangle(cornerRadius: 18))
+                Button(action: send) {
+                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
+                }
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && files.isEmpty)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(.bar)
+    }
+}
+
+struct AttachMenu: View {
+    @Binding var files: [Attachment]
+    @State private var picks: [PhotosPickerItem] = []
+    @State private var showPhotos = false
+    @State private var showFiles = false
+    @State private var showCamera = false
+
+    var body: some View {
+        Menu {
+            Button { showPhotos = true } label: { Label("Photos", systemImage: "photo.on.rectangle") }
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button { showCamera = true } label: { Label("Camera", systemImage: "camera") }
+            }
+            Button { showFiles = true } label: { Label("Files", systemImage: "folder") }
+            Button { pasteClipboard() } label: { Label("Paste", systemImage: "doc.on.clipboard") }
+        } label: {
+            Image(systemName: "plus.circle").font(.system(size: 28)).foregroundStyle(.secondary)
+        }
+        .photosPicker(isPresented: $showPhotos, selection: $picks, maxSelectionCount: 10, matching: .images)
+        .onChange(of: picks) { _, items in
+            guard !items.isEmpty else { return }
+            Task {
+                for item in items {
+                    if let d = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: d), let a = Attachment.photo(img) {
+                        files.append(a)
+                    }
+                }
+                picks = []
+            }
+        }
+        .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
+            guard case .success(let urls) = r else { return }
+            for u in urls {
+                let ok = u.startAccessingSecurityScopedResource()
+                defer { if ok { u.stopAccessingSecurityScopedResource() } }
+                if let d = try? Data(contentsOf: u) {
+                    files.append(Attachment(name: u.lastPathComponent, data: d, preview: nil))
+                }
+            }
+        }
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPicker { img in if let img, let a = Attachment.photo(img) { files.append(a) } }.ignoresSafeArea()
+        }
+    }
+
+    private func pasteClipboard() {
+        let pb = UIPasteboard.general
+        if let imgs = pb.images, !imgs.isEmpty {
+            for img in imgs { if let a = Attachment.photo(img, name: "pasted") { files.append(a) } }
+        } else if let u = pb.url, u.isFileURL, let d = try? Data(contentsOf: u) {
+            files.append(Attachment(name: u.lastPathComponent, data: d, preview: nil))
+        }
+    }
+}
+
+struct AttachmentBar: View {
+    @Binding var files: [Attachment]
+
+    var body: some View {
+        if !files.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack {
+                    ForEach(files) { f in
+                        ZStack(alignment: .topTrailing) {
+                            Group {
+                                if let p = f.preview {
+                                    Image(uiImage: p).resizable().scaledToFill()
+                                } else {
+                                    VStack { Image(systemName: "doc"); Text(f.name).font(.caption2).lineLimit(2) }.padding(4)
+                                }
+                            }
+                            .frame(width: 64, height: 64).background(Theme.card).clipShape(RoundedRectangle(cornerRadius: 8))
+                            Button { files.removeAll { $0.id == f.id } } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(.white, .black.opacity(0.6))
+                            }.offset(x: 4, y: -4)
+                        }
+                    }
+                }.padding(.top, 4)
+            }
+        }
+    }
+}
+
+struct CameraPicker: UIViewControllerRepresentable {
+    let done: (UIImage?) -> Void
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let c = UIImagePickerController()
+        c.sourceType = .camera
+        c.delegate = context.coordinator
+        return c
+    }
+    func updateUIViewController(_ vc: UIImagePickerController, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(done) }
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let done: (UIImage?) -> Void
+        init(_ done: @escaping (UIImage?) -> Void) { self.done = done }
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            done(info[.originalImage] as? UIImage); picker.dismiss(animated: true)
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { done(nil); picker.dismiss(animated: true) }
+    }
+}
+
+// MARK: - Images from the transcript
+
+final class ImageCache {
+    static let shared = NSCache<NSString, UIImage>()
+}
+
+struct ImageStrip: View {
+    let keys: [String]
+    let sessionID: String
+    var body: some View {
+        if !keys.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(keys, id: \.self) { RemoteImage(sessionID: sessionID, key: $0) }
+            }
+        }
+    }
+}
+
+struct RemoteImage: View {
+    let sessionID: String
+    let key: String
+    @State private var image: UIImage?
+    @State private var full = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+                    .frame(maxWidth: 320, maxHeight: 320)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .onTapGesture { full = true }
+            } else {
+                RoundedRectangle(cornerRadius: 10).fill(Theme.card).frame(width: 160, height: 100)
+                    .overlay(ProgressView())
+            }
+        }
+        .task(id: key) {
+            let ck = "\(sessionID)/\(key)" as NSString
+            if let c = ImageCache.shared.object(forKey: ck) { image = c; return }
+            if let d = try? await API.shared.imageData(session: sessionID, key: key), let img = UIImage(data: d) {
+                ImageCache.shared.setObject(img, forKey: ck)
+                image = img
+            }
+        }
+        .fullScreenCover(isPresented: $full) {
+            ZoomImage(image: image) { full = false }
+        }
+    }
+}
+
+struct ZoomImage: View {
+    let image: UIImage?
+    let close: () -> Void
+    @State private var scale: CGFloat = 1
+    @GestureState private var pinch: CGFloat = 1
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            if let image {
+                ScrollView([.horizontal, .vertical], showsIndicators: false) {
+                    Image(uiImage: image).resizable().scaledToFit()
+                        .frame(width: UIScreen.main.bounds.width * scale * pinch)
+                }
+                .gesture(MagnificationGesture().updating($pinch) { v, s, _ in s = v }.onEnded { scale = max(1, min(6, scale * $0)) })
+                .onTapGesture(count: 2) { scale = scale > 1 ? 1 : 2.5 }
+            }
+            Button(action: close) {
+                Image(systemName: "xmark.circle.fill").font(.system(size: 30)).foregroundStyle(.white, .gray.opacity(0.5))
+            }.padding()
+        }
+    }
+}
