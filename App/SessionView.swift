@@ -71,8 +71,7 @@ struct SessionView: View {
                                 .font(.footnote).foregroundStyle(.yellow)
                         }
                         if let p = d.session.pending {
-                            Text(d.session.pendingError.map { "\(p == "archive" ? "Archive" : "Restore") failed: \($0)" } ?? "\(p == "archive" ? "Archiving" : "Restoring") on your PC…")
-                                .font(.footnote).foregroundStyle(d.session.pendingError == nil ? .secondary : .red)
+                            PendingNote(action: p, error: d.session.pendingError)
                         }
                         if d.session.isWorking {
                             HStack(spacing: 8) { ProgressView(); Text("Claude is working…").foregroundStyle(.secondary) }.font(.footnote)
@@ -524,5 +523,19 @@ struct TimeLabel: View {
     let ts: String?
     var body: some View {
         if let d = MsgTime.parse(ts) { Text(MsgTime.time(d)).font(.caption2).foregroundStyle(.tertiary) }
+    }
+}
+
+// "Archiving on your PC…" while the desktop carries it out, or why it failed.
+struct PendingNote: View {
+    let action: String
+    let error: String?
+    var body: some View {
+        let archive = action == "archive"
+        if let error {
+            Text((archive ? "Archive failed: " : "Restore failed: ") + error).font(.footnote).foregroundStyle(.red)
+        } else {
+            Text(archive ? "Archiving on your PC…" : "Restoring on your PC…").font(.footnote).foregroundStyle(.secondary)
+        }
     }
 }
