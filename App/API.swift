@@ -22,7 +22,9 @@ struct Session: Codable, Identifiable, Hashable {
     var pendingError: String?
 
     var isWorking: Bool { working ?? false }
-    var lastActive: Date? { activity.map { Date(timeIntervalSince1970: $0 / 1000) } }
+    var lastMessageAt: Double?
+    // Time of the newest message (server 1.16.1+), else the desktop's last activity.
+    var lastActive: Date? { (lastMessageAt ?? activity).map { Date(timeIntervalSince1970: $0 / 1000) } }
 }
 
 struct Message: Codable, Hashable {

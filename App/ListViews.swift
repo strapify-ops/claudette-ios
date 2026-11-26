@@ -52,7 +52,7 @@ struct SessionListView: View {
         store.sessions
             .filter { tab == 0 ? !$0.archived : $0.archived }
             .filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || ($0.summary ?? "").localizedCaseInsensitiveContains(query) }
-            .sorted { ($0.activity ?? 0) > ($1.activity ?? 0) }
+            .sorted { ($0.lastMessageAt ?? $0.activity ?? 0) > ($1.lastMessageAt ?? $1.activity ?? 0) }
     }
 
     var body: some View {
