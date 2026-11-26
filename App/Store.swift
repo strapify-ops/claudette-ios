@@ -25,6 +25,8 @@ final class Store: ObservableObject {
     @Published var outgoing: [String: [Outgoing]] = [:]
     @Published var pushNote: String?
     @Published var lastLoad: Date?
+    @Published var catalog: [CatalogModel] = []
+    private var retryFiles: [UUID: [Attachment]] = [:]
 
     private var poll: Task<Void, Never>?
 
@@ -51,6 +53,7 @@ final class Store: ObservableObject {
     func loadList() async {
         do {
             sessions = try await API.shared.sessions()
+            if catalog.isEmpty, let c = try? await API.shared.models() { catalog = c }
             listError = nil
             lastLoad = Date()
         } catch APIError.signedOut {
@@ -102,17 +105,30 @@ final class Store: ObservableObject {
     func send(to id: String, text: String, files: [Attachment]) {
         let item = Outgoing(text: text, state: files.isEmpty ? .sending : .uploading)
         outgoing[id, default: []].append(item)
-        let itemID = item.id
+        run(id, item.id, text: text, files: files)
+    }
+
+    // Try a failed message again: files already on the PC are not uploaded twice.
+    func retry(_ id: String, _ itemID: UUID) {
+        guard let o = outgoing[id]?.first(where: { $0.id == itemID }) else { return }
+        update(id, itemID) { $0.state = o.sentText == nil && !(retryFiles[itemID] ?? []).isEmpty ? .uploading : .sending; $0.error = nil; $0.progress = 0 }
+        if let full = o.sentText { run(id, itemID, text: full, files: [], already: true) }
+        else { run(id, itemID, text: o.text, files: retryFiles[itemID] ?? []) }
+    }
+
+    private func run(_ id: String, _ itemID: UUID, text: String, files: [Attachment], already: Bool = false) {
+        retryFiles[itemID] = files
         // Keep running for a while if the app is put away mid-upload.
         let bg = UIApplication.shared.beginBackgroundTask(withName: "send") {}
         Task {
             defer { UIApplication.shared.endBackgroundTask(bg) }
             do {
                 let paths = try await uploadAll(files) { frac in self.update(id, itemID) { $0.progress = frac } }
-                let full = withPaths(text, paths)
+                let full = already ? text : withPaths(text, paths)
                 update(id, itemID) { $0.state = .sending; $0.sentText = full }
                 try await API.shared.type(id, full)
                 update(id, itemID) { $0.state = .sent; $0.at = Date() }
+                retryFiles[itemID] = nil
             } catch {
                 update(id, itemID) { $0.state = .failed; $0.error = error.localizedDescription }
             }
@@ -127,6 +143,7 @@ final class Store: ObservableObject {
 
     func dismiss(_ id: String, _ itemID: UUID) {
         outgoing[id]?.removeAll { $0.id == itemID }
+        retryFiles[itemID] = nil
     }
 
     // Sent messages leave once their text shows in the transcript (or after 10 minutes).

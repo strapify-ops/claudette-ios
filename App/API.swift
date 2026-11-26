@@ -57,6 +57,21 @@ struct OkReply: Codable {
 
 struct Suggestion: Codable { var text: String? }
 
+// One row of the desktop's model menu (server /api/models, read from its model catalog).
+struct CatalogModel: Codable, Hashable, Identifiable {
+    var id: String?
+    var name: String
+    var section: String?
+    var notice: String?
+    var efforts: [Effort]
+    var defaultEffort: String?
+    var fast: Bool?
+    var key: String { id ?? name }
+    var isMain: Bool { (section ?? "main") == "main" }
+
+    struct Effort: Codable, Hashable { var id: String; var name: String; var badge: String? }
+}
+
 // MARK: - Keychain
 
 enum Keychain {
@@ -135,8 +150,9 @@ final class API {
         return try JSONDecoder().decode(T.self, from: d)
     }
 
-    func post(_ path: String, json: [String: Any] = [:]) async throws -> OkReply {
+    func post(_ path: String, json: [String: Any] = [:], timeout: TimeInterval = 60) async throws -> OkReply {
         var req = try request(path, method: "POST")
+        req.timeoutInterval = timeout
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: json)
         let (d, r) = try await session.data(for: req)
@@ -149,10 +165,12 @@ final class API {
     func sessions() async throws -> [Session] { try await get("/api/sessions", as: [Session].self) }
     func detail(_ id: String) async throws -> Detail { try await get("/api/sessions/\(id)?limit=300", as: Detail.self) }
     func suggest(_ id: String) async throws -> String { try await get("/api/sessions/\(id)/suggest", as: Suggestion.self).text ?? "" }
-    func type(_ id: String, _ text: String) async throws { _ = try await post("/api/sessions/\(id)/type", json: ["text": text]) }
+    // Long timeout: a reply to an archived session waits on the PC while it is restored.
+    func type(_ id: String, _ text: String) async throws { _ = try await post("/api/sessions/\(id)/type", json: ["text": text], timeout: 200) }
+    func models() async throws -> [CatalogModel] { try await get("/api/models", as: [CatalogModel].self) }
     func archive(_ id: String, _ action: String) async throws { _ = try await post("/api/sessions/\(id)/\(action)") }
-    func newSession(text: String, model: String, effort: String) async throws -> String? {
-        try await post("/api/new", json: ["text": text, "model": model, "effort": effort]).id
+    func newSession(text: String, model: String, effort: String, fast: Bool) async throws -> String? {
+        try await post("/api/new", json: ["text": text, "model": model, "effort": effort, "fast": fast], timeout: 120).id
     }
     func registerPush(_ token: String) async throws {
         _ = try await post("/api/push/apns", json: ["token": token])

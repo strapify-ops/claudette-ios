@@ -76,7 +76,7 @@ struct SessionView: View {
             .defaultScrollAnchor(.bottom)
             .background(Theme.bg)
             .safeAreaInset(edge: .bottom) {
-                Composer(text: $text, files: $files, suggestion: suggestion, focused: $focused) {
+                Composer(text: $text, files: $files, suggestion: suggestion) {
                     let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !t.isEmpty || !files.isEmpty else { return }
                     store.send(to: id, text: t, files: files)
@@ -100,15 +100,24 @@ struct SessionView: View {
                         } else {
                             Button(s.archived ? "Restore" : "Archive") { act(s.archived ? "unarchive" : "archive") }
                         }
+                        let cur = store.catalog.first { $0.id == s.model || (s.model ?? "").hasPrefix($0.id ?? "~") }
                         Section("Model") {
-                            ForEach([("claude-fable-5-1", "Fable 5.1"), ("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-haiku-5-5", "Haiku 5.5")], id: \.0) { m in
-                                Button(m.1) { store.send(to: id, text: "/model \(m.0)", files: []) }
+                            ForEach(store.catalog.filter(\.isMain)) { m in modelButton(m, cur) }
+                            Menu("More models") {
+                                ForEach(store.catalog.filter { !$0.isMain }) { m in modelButton(m, cur) }
                             }
                         }
-                        Section("Effort") {
-                            ForEach(["low", "medium", "high", "xhigh", "max"], id: \.self) { e in
-                                Button(e) { store.send(to: id, text: "/effort \(e)", files: []) }
+                        if let efforts = cur?.efforts, !efforts.isEmpty {
+                            Section("Effort") {
+                                ForEach(efforts, id: \.id) { e in
+                                    Button { store.send(to: id, text: "/effort \(e.id)", files: []) } label: {
+                                        if s.effort == e.id { Label(e.name, systemImage: "checkmark") } else { Text(e.badge.map { "\(e.name)  (\($0))" } ?? e.name) }
+                                    }
+                                }
                             }
+                        }
+                        if cur?.fast == true {
+                            Button { store.send(to: id, text: "/fast", files: []) } label: { Label("Fast mode (toggle)", systemImage: "hare") }
                         }
                     }
                 } label: { Image(systemName: "ellipsis.circle") }
@@ -119,6 +128,12 @@ struct SessionView: View {
                 await load()
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
             }
+        }
+    }
+
+    @ViewBuilder private func modelButton(_ m: CatalogModel, _ cur: CatalogModel?) -> some View {
+        Button { if let mid = m.id { store.send(to: id, text: "/model \(mid)", files: []) } } label: {
+            if m.key == cur?.key { Label(m.name, systemImage: "checkmark") } else { Text(m.name) }
         }
     }
 
@@ -221,6 +236,7 @@ struct OutgoingView: View {
             case .failed:
                 HStack {
                     Text("Not sent: \(o.error ?? "")").font(.caption).foregroundStyle(.red)
+                    Button("Retry") { store.retry(sessionID, o.id) }.font(.caption.weight(.semibold))
                     Button("Dismiss") { store.dismiss(sessionID, o.id) }.font(.caption)
                 }
             }
@@ -236,7 +252,6 @@ struct Composer: View {
     @Binding var text: String
     @Binding var files: [Attachment]
     let suggestion: String
-    var focused: FocusState<Bool>.Binding
     let send: () -> Void
 
     var body: some View {
@@ -251,10 +266,8 @@ struct Composer: View {
             AttachmentBar(files: $files)
             HStack(alignment: .bottom, spacing: 8) {
                 AttachMenu(files: $files)
-                TextField(suggestion.isEmpty ? "Reply to Claude" : suggestion, text: $text, axis: .vertical)
-                    .lineLimit(1...8)
-                    .focused(focused)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
+                PasteTextView(text: $text, placeholder: suggestion.isEmpty ? "Reply to Claude" : suggestion) { files.append(contentsOf: $0) }
+                    .padding(.horizontal, 8).padding(.vertical, 2)
                     .background(Theme.card, in: RoundedRectangle(cornerRadius: 18))
                 Button(action: send) {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))

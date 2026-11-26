@@ -143,10 +143,9 @@ struct SessionRow: View {
 struct NewSessionView: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
-    static let models = ["Opus 5.5", "Fable 5.1", "Sonnet 5.5", "Haiku 5.5"]
-    static let efforts = ["Low", "Medium", "High", "Extra", "Max"]
     @AppStorage("newModel") private var model = "Opus 5.5"
     @AppStorage("newEffort") private var effort = "Medium"
+    @AppStorage("newFast") private var fast = false
     @AppStorage("newDraft") private var text = ""
     @State private var files: [Attachment] = []
     @State private var phase: String?
@@ -157,10 +156,7 @@ struct NewSessionView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Model").font(.subheadline.weight(.semibold))
-                    Pills(options: Self.models, selection: $model)
-                    Text("Effort").font(.subheadline.weight(.semibold))
-                    Pills(options: Self.efforts, selection: $effort)
+                    ModelPicker(catalog: store.catalog, model: $model, effort: $effort, fast: $fast)
                     TextField("What should Claude do?", text: $text, axis: .vertical)
                         .lineLimit(4...12)
                         .padding(12).background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
@@ -184,6 +180,8 @@ struct NewSessionView: View {
         .interactiveDismissDisabled(busy)
     }
 
+    private var current: CatalogModel? { store.catalog.first { $0.name == model } }
+
     private func start() async {
         busy = true
         error = nil
@@ -196,7 +194,7 @@ struct NewSessionView: View {
                 paths = try await store.uploadAll(files) { phase = "Uploading \(Int($0 * 100))%. Keep Claudette open." }
             }
             phase = "Starting on your PC…"
-            let id = try await API.shared.newSession(text: withPaths(text.trimmingCharacters(in: .whitespacesAndNewlines), paths), model: model, effort: effort)
+            let id = try await API.shared.newSession(text: withPaths(text.trimmingCharacters(in: .whitespacesAndNewlines), paths), model: model, effort: effort, fast: fast && current?.fast == true)
             text = ""
             files = []
             await store.loadList()
@@ -224,6 +222,51 @@ struct Pills: View {
                         .foregroundStyle(.white)
                 }
             }
+        }
+    }
+}
+
+// Like the desktop's model menu: main models, "More models", effort levels with their badges,
+// and the Fast mode toggle for models that have it. Read from the server's /api/models.
+struct ModelPicker: View {
+    let catalog: [CatalogModel]
+    @Binding var model: String
+    @Binding var effort: String
+    @Binding var fast: Bool
+
+    private var main: [CatalogModel] { catalog.filter(\.isMain) }
+    private var more: [CatalogModel] { catalog.filter { !$0.isMain } }
+    private var current: CatalogModel? { catalog.first { $0.name == model } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Model").font(.subheadline.weight(.semibold))
+            if catalog.isEmpty {
+                Text("Loading models from your PC…").font(.footnote).foregroundStyle(.secondary)
+            } else {
+                Pills(options: main.map(\.name) + (more.contains { $0.name == model } ? [model] : []), selection: $model)
+                if !more.isEmpty {
+                    Menu {
+                        ForEach(more) { m in Button(m.name) { model = m.name } }
+                    } label: { Label("More models", systemImage: "chevron.down").font(.footnote) }
+                }
+                if let n = current?.notice { Text(n).font(.caption).foregroundStyle(.secondary) }
+                if let efforts = current?.efforts, !efforts.isEmpty {
+                    Text("Effort").font(.subheadline.weight(.semibold))
+                    Pills(options: efforts.map(\.name), selection: $effort)
+                    if let b = efforts.first(where: { $0.name == effort })?.badge {
+                        Text(b).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if current?.fast == true {
+                    Toggle("Fast mode", isOn: $fast).font(.subheadline.weight(.semibold))
+                }
+            }
+        }
+        .onChange(of: model) { _, _ in
+            // Keep the effort valid for the new model; fall back to its default.
+            guard let m = current, !m.efforts.isEmpty, !m.efforts.contains(where: { $0.name == effort }) else { return }
+            effort = m.efforts.first { $0.id == m.defaultEffort }?.name ?? m.efforts[0].name
         }
     }
 }
