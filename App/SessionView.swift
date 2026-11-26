@@ -70,6 +70,10 @@ struct SessionView: View {
                             Label("\(q.count) message\(q.count == 1 ? "" : "s") waiting in the desktop's queue for Claude", systemImage: "hourglass")
                                 .font(.footnote).foregroundStyle(.yellow)
                         }
+                        if let p = d.session.pending {
+                            Text(d.session.pendingError.map { "\(p == "archive" ? "Archive" : "Restore") failed: \($0)" } ?? "\(p == "archive" ? "Archiving" : "Restoring") on your PC…")
+                                .font(.footnote).foregroundStyle(d.session.pendingError == nil ? .secondary : .red)
+                        }
                         if d.session.isWorking {
                             HStack(spacing: 8) { ProgressView(); Text("Claude is working…").foregroundStyle(.secondary) }.font(.footnote)
                         } else if let n = d.session.needsAction, !n.isEmpty {
@@ -107,7 +111,10 @@ struct SessionView: View {
                 Menu {
                     if let s = session {
                         Text([s.model, s.effort].compactMap { $0 }.joined(separator: " · "))
-                        if let p = s.pending {
+                        if let p = s.pending, s.pendingError != nil {
+                            Button("Try \(p == "archive" ? "archiving" : "restoring") again") { Task { try? await API.shared.archive(id, "cancel"); act(p) } }
+                            Button("Dismiss the error") { act("cancel") }
+                        } else if let p = s.pending {
                             Button("Cancel \(p == "archive" ? "archiving" : "restoring")") { act("cancel") }
                         } else {
                             Button(s.archived ? "Restore" : "Archive") { act(s.archived ? "unarchive" : "archive") }
@@ -216,6 +223,9 @@ struct BlockView: View {
                                         .font(.caption).foregroundStyle(.secondary)
                                 } else if x.r == "err" {
                                     Text(x.t ?? "").font(.caption.monospaced()).foregroundStyle(.red)
+                                } else if x.r == "shot" {
+                                    // Tool-result images belong to their step, like the desktop: only seen when expanded.
+                                    ImageStrip(keys: x.imgs ?? [], sessionID: sessionID)
                                 }
                             }
                         }.padding(.top, 4)
@@ -223,10 +233,14 @@ struct BlockView: View {
                         HStack(spacing: 4) {
                             Text(live ? "Working · \(tools.last?.short ?? tools.last?.name ?? "")" : "\(tools.count) step\(tools.count == 1 ? "" : "s")")
                             if errs > 0 { Text("· \(errs) error\(errs == 1 ? "" : "s")").foregroundStyle(.red) }
+                            if !shots.isEmpty { Image(systemName: "photo").font(.caption2) }
                         }.font(.footnote).foregroundStyle(.secondary)
                     }
+                } else if !shots.isEmpty {
+                    DisclosureGroup(isExpanded: $open) { ImageStrip(keys: shots, sessionID: sessionID) } label: {
+                        Text("\(shots.count) tool image\(shots.count == 1 ? "" : "s")").font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
-                ImageStrip(keys: shots, sessionID: sessionID)
             }
         }
     }
