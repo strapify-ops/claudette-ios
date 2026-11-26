@@ -124,6 +124,8 @@ struct SessionRow: View {
                 HStack {
                     if s.kind != nil { Image(systemName: "arrow.triangle.branch").font(.caption).foregroundStyle(.secondary) }
                     Text(s.title).font(.body.weight(.medium)).lineLimit(2)
+                    Spacer(minLength: 6)
+                    if let d = s.lastActive { Text(MsgTime.listStamp(d)).font(.caption).foregroundStyle(.tertiary) }
                 }
                 if let st = status {
                     Text(st.0).font(.footnote).foregroundStyle(st.1).lineLimit(2)
@@ -131,8 +133,7 @@ struct SessionRow: View {
                     Text(sum).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                 }
                 HStack(spacing: 6) {
-                    if let d = s.lastActive { Text(d, style: .relative) }
-                    if let p = s.project, !p.isEmpty { Text("· \(p)") }
+                    if let p = s.project, !p.isEmpty { Text(p) }
                 }.font(.caption2).foregroundStyle(.tertiary)
             }
         }

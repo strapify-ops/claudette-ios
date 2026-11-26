@@ -484,6 +484,16 @@ enum MsgTime {
         let f = DateFormatter(); f.locale = Locale(identifier: "en_AU"); f.timeZone = tz; f.dateFormat = "h:mm a"
         return f.string(from: d).lowercased()
     }
+    // Session list: time if today, "Yesterday", weekday within a week, else "26 Nov".
+    static func listStamp(_ d: Date) -> String {
+        if cal.isDateInToday(d) { return time(d) }
+        if cal.isDateInYesterday(d) { return "Yesterday" }
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_AU"); f.timeZone = tz
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: d), to: cal.startOfDay(for: Date())).day ?? 99
+        f.dateFormat = days < 7 ? "EEEE" : (cal.component(.year, from: d) == cal.component(.year, from: Date()) ? "d MMM" : "d MMM yyyy")
+        return f.string(from: d)
+    }
+
     // "Today", "Yesterday" or "Thu 26 Nov" when this block starts a new day.
     static func dayChange(_ d: Date?, _ prev: Date?) -> String? {
         guard let d else { return nil }
