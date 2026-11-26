@@ -147,7 +147,7 @@ struct NewSessionView: View {
     @AppStorage("newModel") private var model = "Opus 5.5"
     @AppStorage("newEffort") private var effort = "Medium"
     @AppStorage("newFast") private var fast = false
-    @AppStorage("newDraft") private var text = ""
+    @State private var text = ""
     @State private var files: [Attachment] = []
     @State private var phase: String?
     @State private var error: String?
@@ -179,6 +179,9 @@ struct NewSessionView: View {
             }
         }
         .interactiveDismissDisabled(busy)
+        .onAppear { (text, files) = Drafts.load("new") }
+        .onChange(of: text) { _, t in Drafts.save("new", text: t, files: files) }
+        .onChange(of: files.map(\.id)) { _, _ in Drafts.save("new", text: text, files: files) }
     }
 
     private var current: CatalogModel? { store.catalog.first { $0.name == model } }
@@ -198,6 +201,7 @@ struct NewSessionView: View {
             let id = try await API.shared.newSession(text: withPaths(text.trimmingCharacters(in: .whitespacesAndNewlines), paths), model: model, effort: effort, fast: fast && current?.fast == true)
             text = ""
             files = []
+            Drafts.clear("new")
             await store.loadList()
             dismiss()
             if let id { store.open(id) }

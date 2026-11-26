@@ -30,6 +30,18 @@ final class Store: ObservableObject {
 
     private var poll: Task<Void, Never>?
 
+    init() {
+        // Sends the app never heard back about (killed or put away mid-send) come back as failed, ready to retry.
+        for (sid, text, files, dirName) in Drafts.leftoverInflight() {
+            var o = Outgoing(text: text, state: .failed)
+            o.error = "Claudette closed before your PC confirmed this. Retry to send it."
+            outgoing[sid, default: []].append(o)
+            retryFiles[o.id] = files
+            Drafts.clearRaw(dirName)
+            Drafts.saveInflight(o.id, session: sid, text: text, files: files)
+        }
+    }
+
     func session(_ id: String) -> Session? { sessions.first { $0.id == id } }
 
     func open(_ id: String) {
@@ -118,6 +130,7 @@ final class Store: ObservableObject {
 
     private func run(_ id: String, _ itemID: UUID, text: String, files: [Attachment], already: Bool = false) {
         retryFiles[itemID] = files
+        Drafts.saveInflight(itemID, session: id, text: text, files: files)
         // Keep running for a while if the app is put away mid-upload.
         let bg = UIApplication.shared.beginBackgroundTask(withName: "send") {}
         Task {
@@ -129,6 +142,7 @@ final class Store: ObservableObject {
                 try await API.shared.type(id, full)
                 update(id, itemID) { $0.state = .sent; $0.at = Date() }
                 retryFiles[itemID] = nil
+                Drafts.clearInflight(itemID)
             } catch {
                 update(id, itemID) { $0.state = .failed; $0.error = error.localizedDescription }
             }
@@ -144,6 +158,7 @@ final class Store: ObservableObject {
     func dismiss(_ id: String, _ itemID: UUID) {
         outgoing[id]?.removeAll { $0.id == itemID }
         retryFiles[itemID] = nil
+        Drafts.clearInflight(itemID)
     }
 
     // Sent messages leave once their text shows in the transcript (or after 10 minutes).

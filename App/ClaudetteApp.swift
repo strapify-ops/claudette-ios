@@ -61,7 +61,7 @@ struct RootView: View {
             if store.configured {
                 NavigationStack(path: $store.path) {
                     SessionListView()
-                        .navigationDestination(for: String.self) { SessionView(id: $0) }
+                        .navigationDestination(for: String.self) { SessionView(id: $0).id($0) } // fresh view state per session: a notification tap never shows another session's draft
                 }
             } else {
                 SetupView()

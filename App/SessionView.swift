@@ -141,6 +141,9 @@ struct SessionView: View {
                 } label: { Image(systemName: "ellipsis.circle") }
             }
         }
+        .onAppear { (text, files) = Drafts.load(id) }
+        .onChange(of: text) { _, t in Drafts.save(id, text: t, files: files) }
+        .onChange(of: files.map(\.id)) { _, _ in Drafts.save(id, text: text, files: files) }
         .task(id: id) {
             while !Task.isCancelled {
                 await load()
