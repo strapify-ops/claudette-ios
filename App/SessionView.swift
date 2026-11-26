@@ -8,6 +8,13 @@ enum Block: Identifiable {
     case asst(Int, Message)
     case steps(Int, [Message], live: Bool)
 
+    var date: Date? {
+        switch self {
+        case .user(_, let m), .asst(_, let m): return MsgTime.parse(m.ts)
+        case .steps(_, let run, _): return MsgTime.parse(run.first?.ts)
+        }
+    }
+
     var id: Int {
         switch self { case .user(let i, _), .asst(let i, _), .steps(let i, _, _): return i }
     }
@@ -50,7 +57,12 @@ struct SessionView: View {
                         if d.total > d.messages.count {
                             Text("Showing the last \(d.messages.count) of \(d.total)").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                         }
-                        ForEach(blocks(d.messages, working: d.session.isWorking)) { b in
+                        let bs = blocks(d.messages, working: d.session.isWorking)
+                        ForEach(Array(bs.enumerated()), id: \.element.id) { n, b in
+                            if let day = MsgTime.dayChange(b.date, n > 0 ? bs[n - 1].date : nil) {
+                                Text(day).font(.caption2.weight(.medium)).foregroundStyle(.tertiary)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 4)
+                            }
                             BlockView(block: b, sessionID: id)
                         }
                         ForEach(store.outgoing[id] ?? []) { o in OutgoingView(o: o, sessionID: id) }
@@ -181,11 +193,15 @@ struct BlockView: View {
                     Text(t).textSelection(.enabled)
                         .padding(10).background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 14))
                 }
+                TimeLabel(ts: m.ts)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 40)
         case .asst(_, let m):
-            MarkdownView(text: m.t ?? "")
+            VStack(alignment: .leading, spacing: 4) {
+                MarkdownView(text: m.t ?? "")
+                TimeLabel(ts: m.ts)
+            }
         case .steps(_, let run, let live):
             let tools = run.filter { $0.r == "tool" }
             let errs = run.filter { $0.r == "err" }.count
@@ -454,5 +470,35 @@ struct ZoomImage: View {
                 Image(systemName: "xmark.circle.fill").font(.system(size: 30)).foregroundStyle(.white, .gray.opacity(0.5))
             }.padding()
         }
+    }
+}
+
+// Message times, always in Melbourne time, small and muted like the desktop app.
+enum MsgTime {
+    static let tz = TimeZone(identifier: "Australia/Melbourne") ?? .current
+    private static let iso: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+    private static let isoPlain = ISO8601DateFormatter()
+    static func parse(_ s: String?) -> Date? { guard let s else { return nil }; return iso.date(from: s) ?? isoPlain.date(from: s) }
+    private static var cal: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = tz; return c }
+    static func time(_ d: Date) -> String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_AU"); f.timeZone = tz; f.dateFormat = "h:mm a"
+        return f.string(from: d).lowercased()
+    }
+    // "Today", "Yesterday" or "Thu 26 Nov" when this block starts a new day.
+    static func dayChange(_ d: Date?, _ prev: Date?) -> String? {
+        guard let d else { return nil }
+        if let prev, cal.isDate(d, inSameDayAs: prev) { return nil }
+        if cal.isDateInToday(d) { return "Today" }
+        if cal.isDateInYesterday(d) { return "Yesterday" }
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_AU"); f.timeZone = tz
+        f.dateFormat = cal.component(.year, from: d) == cal.component(.year, from: Date()) ? "EEE d MMM" : "EEE d MMM yyyy"
+        return f.string(from: d)
+    }
+}
+
+struct TimeLabel: View {
+    let ts: String?
+    var body: some View {
+        if let d = MsgTime.parse(ts) { Text(MsgTime.time(d)).font(.caption2).foregroundStyle(.tertiary) }
     }
 }
