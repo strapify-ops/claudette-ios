@@ -1,4 +1,4 @@
-# Claudette for iPhone
+# CodeBypass for iPhone (repo and bundle id still say claudette)
 
 Native SwiftUI client for the Claude Phone server (`claude-phone`, Node on :8787 over Tailscale).
 Not a web wrapper: it talks to the server's JSON API (`/api/sessions`, `/api/sessions/:id`, `/type`,

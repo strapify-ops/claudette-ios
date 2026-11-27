@@ -265,7 +265,7 @@ struct OutgoingView: View {
             switch o.state {
             case .uploading:
                 ProgressView(value: o.progress).frame(width: 160)
-                Text("Uploading \(Int(o.progress * 100))%. Keep Claudette open.").font(.caption).foregroundStyle(.orange)
+                Text("Uploading \(Int(o.progress * 100))%. Keep CodeBypass open.").font(.caption).foregroundStyle(.orange)
             case .sending:
                 Text("Sending…").font(.caption).foregroundStyle(.secondary)
             case .sent:

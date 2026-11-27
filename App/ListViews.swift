@@ -24,7 +24,7 @@ struct SetupView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.bg)
-            .navigationTitle("Claudette")
+            .navigationTitle("CodeBypass")
         }
     }
 
@@ -92,11 +92,11 @@ struct SessionListView: View {
             }
             .padding(20)
         }
-        .navigationTitle("Claudette")
+        .navigationTitle("CodeBypass")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Text("Claudette \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
+                    Text("CodeBypass \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
                     Button("Sign out", role: .destructive) { store.signOut() }
                 } label: { Image(systemName: "ellipsis.circle") }
             }
@@ -194,8 +194,8 @@ struct NewSessionView: View {
         do {
             var paths: [String] = []
             if !files.isEmpty {
-                phase = "Uploading 0%. Keep Claudette open."
-                paths = try await store.uploadAll(files) { phase = "Uploading \(Int($0 * 100))%. Keep Claudette open." }
+                phase = "Uploading 0%. Keep CodeBypass open."
+                paths = try await store.uploadAll(files) { phase = "Uploading \(Int($0 * 100))%. Keep CodeBypass open." }
             }
             phase = "Starting on your PC…"
             let id = try await API.shared.newSession(text: withPaths(text.trimmingCharacters(in: .whitespacesAndNewlines), paths), model: model, effort: effort, fast: fast && current?.fast == true)

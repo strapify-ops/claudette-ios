@@ -34,7 +34,7 @@ final class Store: ObservableObject {
         // Sends the app never heard back about (killed or put away mid-send) come back as failed, ready to retry.
         for (sid, text, files, dirName) in Drafts.leftoverInflight() {
             var o = Outgoing(text: text, state: .failed)
-            o.error = "Claudette closed before your PC confirmed this. Retry to send it."
+            o.error = "CodeBypass closed before your PC confirmed this. Retry to send it."
             outgoing[sid, default: []].append(o)
             retryFiles[o.id] = files
             Drafts.clearRaw(dirName)
