@@ -159,7 +159,16 @@ struct NewSessionView: View {
                     ModelPicker(catalog: store.catalog, model: $model, effort: $effort, fast: $fast)
                     TextField("What should Claude do?", text: $text, axis: .vertical)
                         .lineLimit(4...12)
-                        .padding(12).background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(12).padding(.trailing, 34).padding(.bottom, 6)
+                        .background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(alignment: .bottomTrailing) {
+                            // Start from the box itself, like the reply composer's send arrow.
+                            Button { Task { await start() } } label: {
+                                Image(systemName: "arrow.up.circle.fill").font(.system(size: 30))
+                            }
+                            .disabled(busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .padding(8)
+                        }
                     AttachmentBar(files: $files)
                     if let phase { Text(phase).font(.footnote).foregroundStyle(.secondary) }
                     if let error { Text(error).font(.footnote).foregroundStyle(.red) }
