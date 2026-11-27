@@ -26,10 +26,10 @@ func blocks(_ msgs: [Message], working: Bool) -> [Block] {
     while i < msgs.count {
         let m = msgs[i]
         if m.r == "user" { out.append(.user(i, m)); i += 1; continue }
-        if m.r == "asst" { out.append(.asst(i, m)); i += 1; continue }
+        if m.r == "asst" || m.r == "file" { out.append(.asst(i, m)); i += 1; continue } // files Claude sent show inline, like a reply
         let start = i
         var run: [Message] = []
-        while i < msgs.count, msgs[i].r != "user", msgs[i].r != "asst" { run.append(msgs[i]); i += 1 }
+        while i < msgs.count, msgs[i].r != "user", msgs[i].r != "asst", msgs[i].r != "file" { run.append(msgs[i]); i += 1 }
         out.append(.steps(start, run, live: working && i == msgs.count))
     }
     return out
@@ -208,7 +208,12 @@ struct BlockView: View {
             .padding(.leading, 40)
         case .asst(_, let m):
             VStack(alignment: .leading, spacing: 4) {
-                MarkdownView(text: m.t ?? "")
+                if m.r == "file" {
+                    if let c = m.t, !c.isEmpty { Text(c).font(.subheadline).foregroundStyle(.secondary) }
+                    SentFiles(files: m.files ?? [], sessionID: sessionID)
+                } else {
+                    MarkdownView(text: m.t ?? "")
+                }
                 TimeLabel(ts: m.ts)
             }
         case .steps(_, let run, let live):
@@ -542,3 +547,60 @@ struct PendingNote: View {
         }
     }
 }
+
+// Files Claude sent with SendUserFile: images inline (tap to zoom), anything else a card that
+// downloads the file from the PC and opens it in Quick Look (share, save, print from there).
+struct SentFiles: View {
+    let files: [Message.SentFile]
+    let sessionID: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(files, id: \.k) { f in
+                if f.image { RemoteImage(sessionID: sessionID, key: f.k) }
+                else { FileCard(file: f, sessionID: sessionID) }
+            }
+        }
+    }
+}
+
+struct FileCard: View {
+    let file: Message.SentFile
+    let sessionID: String
+    @State private var url: URL?
+    @State private var loading = false
+    @State private var error: String?
+
+    var body: some View {
+        Button { Task { await open() } } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "doc.fill").font(.title2).foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(file.name).font(.subheadline.weight(.medium)).lineLimit(2).foregroundStyle(.primary)
+                    Text(error ?? (loading ? "Downloading…" : "Tap to open")).font(.caption).foregroundStyle(error == nil ? Color.secondary : Color.red)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .sheet(item: Binding(get: { url.map(PreviewItem.init) }, set: { if $0 == nil { url = nil } })) { item in
+            QuickLook(url: item.url).ignoresSafeArea()
+        }
+    }
+
+    private func open() async {
+        loading = true; error = nil
+        defer { loading = false }
+        do {
+            let d = try await API.shared.imageData(session: sessionID, key: file.k)
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sent-\(file.k)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let u = dir.appendingPathComponent(file.name)
+            try d.write(to: u, options: .atomic)
+            url = u
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+struct PreviewItem: Identifiable { let url: URL; var id: String { url.path } }

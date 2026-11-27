@@ -35,6 +35,9 @@ struct Message: Codable, Hashable {
     var name: String?
     var short: String?
     var detail: String?
+    var files: [SentFile]?
+
+    struct SentFile: Codable, Hashable { var k: String; var name: String; var image: Bool }
 }
 
 struct QueueItem: Codable, Hashable {
@@ -179,7 +182,8 @@ final class API {
     }
 
     func imageData(session id: String, key: String) async throws -> Data {
-        let (d, r) = try await session.data(for: try request("/api/sessions/\(id)/img/\(key)"))
+        // "i…" keys are transcript images, "f…" keys are files Claude sent with SendUserFile.
+        let (d, r) = try await session.data(for: try request("/api/sessions/\(id)/\(key.hasPrefix("f") ? "file" : "img")/\(key)"))
         try check(d, r)
         return d
     }
