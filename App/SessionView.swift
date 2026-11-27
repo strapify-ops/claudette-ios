@@ -198,7 +198,7 @@ struct BlockView: View {
         case .user(_, let m):
             VStack(alignment: .trailing, spacing: 6) {
                 ImageStrip(keys: m.imgs ?? [], sessionID: sessionID)
-                if let t = m.t, !t.isEmpty {
+                if let t = Optional(cleanAttachmentLines(m.t ?? "", hasImages: !(m.imgs ?? []).isEmpty)), !t.isEmpty {
                     Text(t).textSelection(.enabled)
                         .padding(10).background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 14))
                 }

@@ -240,3 +240,16 @@ func withPaths(_ text: String, _ paths: [String]) -> String {
 func normalise(_ s: String) -> String {
     s.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
 }
+
+// Older phone messages carry "Attached from my phone:" and a list of upload paths. When the
+// pictures themselves are shown, the image paths are noise: drop them (and the heading).
+func cleanAttachmentLines(_ text: String, hasImages: Bool) -> String {
+    guard let r = text.range(of: "Attached from my phone:") else { return text }
+    let head = String(text[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    let paths = text[r.upperBound...].split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) }
+    let isImage = { (p: String) in ["png", "jpg", "jpeg", "gif", "webp", "heic", "bmp"].contains((p as NSString).pathExtension.lowercased()) }
+    let keep = paths.filter { !(hasImages && isImage($0)) }
+    let body = head == "See the attached file." || head == "See the attached files." ? "" : head
+    return ([body] + keep).filter { !$0.isEmpty }.joined(separator: "\n")
+}

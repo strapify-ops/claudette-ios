@@ -175,7 +175,9 @@ final class Store: ObservableObject {
         let keep = list.filter { o in
             guard o.state == .sent else { return true }
             if Date().timeIntervalSince(o.at) > 600 { return false }
-            return !users.contains(normalise(o.sentText ?? o.text))
+            // The PC pastes images as pictures and drops the "Attached from my phone" heading, so match the plain text too.
+            let plain = normalise(cleanAttachmentLines(o.sentText ?? o.text, hasImages: true))
+            return !(users.contains(normalise(o.sentText ?? o.text)) || users.contains(plain) || (!o.text.isEmpty && users.contains { $0.hasPrefix(normalise(o.text)) }))
         }
         if keep.count != list.count { outgoing[id] = keep }
     }
