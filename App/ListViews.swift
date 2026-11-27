@@ -93,6 +93,7 @@ struct SessionListView: View {
         }
         .navigationTitle("CodeBypass")
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { UsageButton() }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Text("CodeBypass \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
