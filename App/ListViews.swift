@@ -46,7 +46,6 @@ struct SessionListView: View {
     @EnvironmentObject var store: Store
     @State private var tab = 0
     @State private var query = ""
-    @State private var showNew = false
 
     private var rows: [Session] {
         store.sessions
@@ -85,7 +84,7 @@ struct SessionListView: View {
                 .pickerStyle(.segmented).padding(.horizontal).padding(.bottom, 6).background(Theme.bg)
         }
         .overlay(alignment: .bottomTrailing) {
-            Button { showNew = true } label: {
+            Button { store.showNew = true } label: {
                 Label("New", systemImage: "plus").font(.headline)
                     .padding(.horizontal, 18).padding(.vertical, 12)
                     .background(Theme.accent, in: Capsule()).foregroundStyle(.white)
@@ -101,7 +100,7 @@ struct SessionListView: View {
                 } label: { Image(systemName: "ellipsis.circle") }
             }
         }
-        .sheet(isPresented: $showNew) { NewSessionView() }
+        .sheet(isPresented: $store.showNew) { NewSessionView() }
     }
 }
 

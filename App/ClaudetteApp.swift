@@ -1,5 +1,6 @@
 import SwiftUI
 import UserNotifications
+import CoreSpotlight
 
 @main
 struct ClaudetteApp: App {
@@ -72,5 +73,9 @@ struct RootView: View {
             if p == .active { store.foreground() } else { store.background() }
         }
         .onAppear { store.foreground() }
+        // A session picked from Spotlight search.
+        .onContinueUserActivity(CSSearchableItemActionType) { a in
+            if let id = a.userInfo?[CSSearchableItemActivityIdentifier] as? String { store.open(id) }
+        }
     }
 }

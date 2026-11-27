@@ -26,6 +26,8 @@ final class Store: ObservableObject {
     @Published var pushNote: String?
     @Published var lastLoad: Date?
     @Published var catalog: [CatalogModel] = []
+    @Published var showNew = false
+    var openLatestWhenLoaded = false
     private var retryFiles: [UUID: [Attachment]] = [:]
 
     private var poll: Task<Void, Never>?
@@ -65,6 +67,11 @@ final class Store: ObservableObject {
     func loadList() async {
         do {
             sessions = try await API.shared.sessions()
+            SpotlightIndex.update(sessions)
+            if openLatestWhenLoaded, let latest = sessions.filter({ !$0.archived }).max(by: { ($0.lastMessageAt ?? $0.activity ?? 0) < ($1.lastMessageAt ?? $1.activity ?? 0) }) {
+                openLatestWhenLoaded = false
+                open(latest.id)
+            }
             if catalog.isEmpty, let c = try? await API.shared.models() { catalog = c }
             listError = nil
             lastLoad = Date()
