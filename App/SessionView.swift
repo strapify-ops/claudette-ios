@@ -470,29 +470,6 @@ struct RemoteImage: View {
     }
 }
 
-struct ZoomImage: View {
-    let image: UIImage?
-    let close: () -> Void
-    @State private var scale: CGFloat = 1
-    @GestureState private var pinch: CGFloat = 1
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
-            if let image {
-                ScrollView([.horizontal, .vertical], showsIndicators: false) {
-                    Image(uiImage: image).resizable().scaledToFit()
-                        .frame(width: UIScreen.main.bounds.width * scale * pinch)
-                }
-                .gesture(MagnificationGesture().updating($pinch) { v, s, _ in s = v }.onEnded { scale = max(1, min(6, scale * $0)) })
-                .onTapGesture(count: 2) { scale = scale > 1 ? 1 : 2.5 }
-            }
-            Button(action: close) {
-                Image(systemName: "xmark.circle.fill").font(.system(size: 30)).foregroundStyle(.white, .gray.opacity(0.5))
-            }.padding()
-        }
-    }
-}
 
 // Message times, always in Melbourne time, small and muted like the desktop app.
 enum MsgTime {
